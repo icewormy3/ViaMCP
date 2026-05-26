@@ -18,6 +18,26 @@ ViaVersion VersionSwitcher for Minecraft Coder Pack (MCP)
   * [Sending raw packets (e.g 1.9 interactions)](#sending-raw-packets-eg-19-interactions)
   * [Exporting Without JAR Files](#exporting-without-jar-files)
 <!-- TOC -->
+# Updating notice for the latest version (if you are on ViaVersion 5.9.x or above)
+ViaVersion 5.9.0 did some changes to the packet registrations and Protocol API, you need to inject your packet registration code into corresponding Protocols if you have to.
+
+For example
+if you are on 1.8, inject your code to the end of ``registerPackets()`` in ``Protocol1_9To1_8.class``.
+if you are on 1.12.2, it's in ``Protocol1_13To1_12_2.class``.
+
+Moreover, you have to update your registration code if you ever overrided packets which are already registered in Via* libraries:
+```java
+// Old
+final Protocol1_17To1_16_4 protocol = Via.getManager().getProtocolManager().getProtocol(Protocol1_17To1_16_4.class);
+protocol.registerClientbound(ClientboundPackets1_17.PING, ClientboundPackets1_16_2.CONTAINER_ACK, wrapper -> {}, true);
+protocol.registerServerbound(ServerboundPackets1_16_2.CONTAINER_ACK, ServerboundPackets1_17.PONG, wrapper -> {}, true);
+
+// New
+final Protocol1_17To1_16_4 protocol = Via.getManager().getProtocolManager().getProtocol(Protocol1_17To1_16_4.class);
+protocol.replaceClientbound(ClientboundPackets1_17.PING, wrapper -> {});
+protocol.replaceServerbound(ServerboundPackets1_16_2.CONTAINER_ACK, wrapper -> {});
+```
+Otherwise, your registration code may be forcely overrided by ViaVersion itself or result in a failure (not working or crash).
 
 # Updating notice for existing users (if you are new to ViaMCP, you can ignore this)
 ViaVersion 4.10.0 did some changes to the ProtocolVersion API, you have to update your own code if you ever used the ViaLoadingBase class:

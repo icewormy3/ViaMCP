@@ -22,10 +22,15 @@ ViaVersion VersionSwitcher for Minecraft Coder Pack (MCP)
 ViaVersion 5.9.0 did some changes to the packet registrations and Protocol API, you need to inject your packet registration code into corresponding Protocols if you have to.
 
 For example
+
 if you are on 1.8, inject your code to the end of ``registerPackets()`` in ``Protocol1_9To1_8.class``.
 if you are on 1.12.2, it's in ``Protocol1_13To1_12_2.class``.
 
-Moreover, you have to update your registration code if you ever overrided packets which are already registered in Via* libraries:
+**For MCP (Mod Coder Pack) client, you may code an injection base to inject fix codes.**
+**For Forge coremod, you can make a mixin injection to ``registerPackets()`` at point ``""RETURN""``.**
+**For other clients, you may make an ASM transformer to inject your code.**
+
+Moreover, you have to update your registration code if you ever overrided packets which are *already registered* in Via* libraries:
 ```java
 // Old
 final Protocol1_17To1_16_4 protocol = Via.getManager().getProtocolManager().getProtocol(Protocol1_17To1_16_4.class);

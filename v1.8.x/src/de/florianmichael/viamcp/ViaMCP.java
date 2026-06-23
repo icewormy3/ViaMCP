@@ -26,6 +26,10 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.base.ServerboundLoginPackets;
+import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+import com.viaversion.viabackwards.protocol.v1_17to1_16_4.storage.PlayerLastCursorItem;
+import com.viaversion.viaversion.protocols.v1_8to1_9.packet.ClientboundPackets1_9;
+
 
 import de.florianmichael.vialoadingbase.ViaLoadingBase;
 import de.florianmichael.viamcp.gui.AsyncVersionSlider;
@@ -36,6 +40,9 @@ public class ViaMCP {
     public final static int NATIVE_VERSION = 47;
     public static ViaMCP INSTANCE;
     public UserConnection user;
+    
+    private static final Queue<PacketWrapper> confirmations = new ConcurrentLinkedQueue<>();
+    private static Minecraft mc = Minecraft.getMinecraft();
     
     public static void create() {
         INSTANCE = new ViaMCP();
@@ -49,13 +56,13 @@ public class ViaMCP {
                 getAsyncVersionSlider().setVersion(protocolVersion.getVersion());
             }
         }).build();
-
-        // Add this line if you implement the transaction fixes into the game code
-        // fixTransactions();
-        
-        // Add this line if you want to join Hypixel
-        // fixHypixelLogin();
-		
+    }
+    
+    public void applyFix() {
+    	fixTransactions();
+    	fixHypixelLogin();
+    	fix1_17CursorItem();
+    	fixTeleportId();
     }
 
     private void fixTransactions() {
@@ -79,6 +86,160 @@ public class ViaMCP {
         	packet.write(Types.UUID, profile.getId());
             packet.sendToServer(Protocol1_20_3To1_20_2.class);
         });
+    }
+    
+    private void fix1_17CursorItem() {
+    	ProtocolManager protocolManager = Via.getManager().getProtocolManager();
+    	Protocol1_17To1_16_4 protocol1_17To1_16_4 = protocolManager.getProtocol(Protocol1_17To1_16_4.class);
+    	protocol1_17To1_16_4.replaceServerbound(ServerboundPackets1_16_2.CONTAINER_CLICK, new PacketHandlers() {
+            @Override
+            public void register() {
+                map(Types.BYTE);
+                handler(wrapper -> {
+                    short slot = wrapper.passthrough(Types.SHORT);
+                    byte button = wrapper.passthrough(Types.BYTE);
+                    wrapper.read(Types.SHORT);
+                    int mode = wrapper.passthrough(Types.VAR_INT);
+
+                    Item clicked = protocol1_17To1_16_4.getItemRewriter()
+                            .handleItemToServer(wrapper.user(), wrapper.read(Types.ITEM1_13_2));
+
+                    wrapper.write(Types.VAR_INT, 0);
+
+                    PlayerLastCursorItem state = wrapper.user().get(PlayerLastCursorItem.class);
+                    if (state == null) {
+                        wrapper.write(Types.ITEM1_13_2, clicked);
+                        return;
+                    }
+
+                    if (mode == 0 && button == 0 && clicked != null) {
+                        state.setLastCursorItem(clicked);
+                    } else if (mode == 0 && button == 1 && clicked != null) {
+                        if (state.isSet()) {
+                            state.setLastCursorItem(clicked);
+                        } else {
+                            state.setLastCursorItem(clicked, (clicked.amount() + 1) / 2);
+                        }
+                    } else if (!(mode == 5 && (slot == -999 && (button == 0 || button == 4) || (button == 1 || button == 5)))) {
+                        state.setLastCursorItem(null);
+                    }
+
+                    Item carried = state.getLastCursorItem();
+                    wrapper.write(Types.ITEM1_13_2, carried == null ? clicked : carried);
+                });
+            }
+        });
+    }
+    
+    private void fixTeleportId() {
+    	ProtocolManager protocolManager = Via.getManager().getProtocolManager();
+        Protocol1_9To1_8 protocol1_9To1_8 = protocolManager.getProtocol(Protocol1_9To1_8.class);
+        
+        if (mc.isSingleplayer() || protocol1_9To1_8 == null || protocol1_17To1_16_4 == null) {
+            System.out.println("VIA crash! Protocols not yet initialized.");
+            return;
+        }
+
+        ClientboundPackets1_9 packetType = ClientboundPackets1_9.PLAYER_POSITION;
+
+        PacketHandlers playerPositionHandler = new PacketHandlers() {
+            @Override
+            public void register() {
+                map(Types.DOUBLE);
+                map(Types.DOUBLE);
+                map(Types.DOUBLE);
+                map(Types.FLOAT);
+                map(Types.FLOAT);
+                map(Types.BYTE);
+                handler(wrapper -> {
+                    int id = wrapper.read(Types.VAR_INT);
+                    PacketWrapper c = PacketWrapper.create(ServerboundPackets1_9.ACCEPT_TELEPORTATION, wrapper.user());
+                    c.write(Types.VAR_INT, id);
+                    confirmations.offer(c);
+
+                    PlayerPositionTracker tracker = wrapper.user().get(PlayerPositionTracker.class);
+                    if (tracker != null) {
+                        tracker.setConfirmId(id);
+
+                        byte flags = wrapper.get(Types.BYTE, 0);
+                        double x = wrapper.get(Types.DOUBLE, 0);
+                        double y = wrapper.get(Types.DOUBLE, 1);
+                        double z = wrapper.get(Types.DOUBLE, 2);
+                        float yaw = wrapper.get(Types.FLOAT, 0);
+                        float pitch = wrapper.get(Types.FLOAT, 1);
+
+                        wrapper.set(Types.BYTE, 0, (byte) 0);
+
+                        if (flags != 0) {
+                            if ((flags & 0x01) != 0) { x += tracker.getPosX(); wrapper.set(Types.DOUBLE, 0, x); }
+                            if ((flags & 0x02) != 0) { y += tracker.getPosY(); wrapper.set(Types.DOUBLE, 1, y); }
+                            if ((flags & 0x04) != 0) { z += tracker.getPosZ(); wrapper.set(Types.DOUBLE, 2, z); }
+                            if ((flags & 0x08) != 0) { yaw += tracker.getYaw(); wrapper.set(Types.FLOAT, 0, yaw); }
+                            if ((flags & 0x10) != 0) { pitch += tracker.getPitch(); wrapper.set(Types.FLOAT, 1, pitch); }
+                        }
+
+                        tracker.setPos(x, y, z);
+                        tracker.setYaw(yaw);
+                        tracker.setPitch(pitch);
+                    }
+                });
+            }
+        };
+
+        // FIX: Defensively bypass the async registration race condition
+        try {
+            if (protocol1_9To1_8.hasRegisteredClientbound(packetType)) {
+                protocol1_9To1_8.replaceClientbound(packetType, playerPositionHandler);
+            } else {
+                protocol1_9To1_8.registerClientbound(com.viaversion.viaversion.api.protocol.packet.State.PLAY, packetType, playerPositionHandler);
+            }
+        } catch (IllegalArgumentException e) {
+            // If it was registered by the mapping loader thread in the split second we checked, replace it instead
+            protocol1_9To1_8.replaceClientbound(packetType, playerPositionHandler);
+        }
+
+        // FIX: Defensively check if serverbound handler exists before attempting replacement
+        PacketHandler serverboundHandler = wrapper -> {
+            PacketWrapper c = confirmations.poll();
+            if (c != null) {
+                c.sendToServer(Protocol1_9To1_8.class);
+            }
+
+            double x = wrapper.passthrough(Types.DOUBLE);
+            double y = wrapper.passthrough(Types.DOUBLE);
+            double z = wrapper.passthrough(Types.DOUBLE);
+            float yaw = wrapper.passthrough(Types.FLOAT);
+            float pitch = wrapper.passthrough(Types.FLOAT);
+            boolean onGround = wrapper.passthrough(Types.BOOLEAN);
+            PlayerPositionTracker tracker = wrapper.user().get(PlayerPositionTracker.class);
+            if (tracker != null) {
+                tracker.sendAnimations();
+                if (tracker.getConfirmId() != -1) {
+                    if (tracker.getPosX() == x &&
+                            tracker.getPosY() == y &&
+                            tracker.getPosZ() == z &&
+                            tracker.getYaw() == yaw &&
+                            tracker.getPitch() == pitch) {
+                        tracker.setConfirmId(-1);
+                    }
+                } else {
+                    tracker.setPos(x, y, z);
+                    tracker.setYaw(yaw);
+                    tracker.setPitch(pitch);
+                    tracker.setOnGround(onGround);
+                    BossBarStorage storage = wrapper.user().get(BossBarStorage.class);
+                    if (storage != null) {
+                        storage.updateLocation();
+                    }
+                }
+            }
+        };
+
+        if (protocol1_9To1_8.hasRegisteredServerbound(ServerboundPackets1_8.MOVE_PLAYER_POS_ROT)) {
+            protocol1_9To1_8.replaceServerbound(ServerboundPackets1_8.MOVE_PLAYER_POS_ROT, serverboundHandler);
+        } else {
+            protocol1_9To1_8.registerServerbound(com.viaversion.viaversion.api.protocol.packet.State.PLAY, ServerboundPackets1_8.MOVE_PLAYER_POS_ROT, serverboundHandler);
+        }
     }
 
     public void initAsyncSlider() {

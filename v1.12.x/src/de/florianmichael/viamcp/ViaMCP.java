@@ -26,6 +26,8 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.base.ServerboundLoginPackets;
+import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+import com.viaversion.viabackwards.protocol.v1_17to1_16_4.storage.PlayerLastCursorItem;
 
 import de.florianmichael.vialoadingbase.ViaLoadingBase;
 import de.florianmichael.viamcp.gui.AsyncVersionSlider;
@@ -49,13 +51,12 @@ public class ViaMCP {
                 getAsyncVersionSlider().setVersion(protocolVersion.getVersion());
             }
         }).build();
-
-        // Add this line if you implement the transaction fixes into the game code
-        // fixTransactions();
-        
-        // Add this line if you want to join Hypixel
-        // fixHypixelLogin();
-		
+    }
+    
+    public void applyFix() {
+    	fixTransactions();
+    	fixHypixelLogin();
+    	fix1_17CursorItem();
     }
 
     private void fixTransactions() {
@@ -78,6 +79,49 @@ public class ViaMCP {
         	UUID uuid = profile.getId();
         	packet.write(Types.UUID, profile.getId());
             packet.sendToServer(Protocol1_20_3To1_20_2.class);
+        });
+    }
+    
+    private void fix1_17CursorItem() {
+    	ProtocolManager protocolManager = Via.getManager().getProtocolManager();
+    	Protocol1_17To1_16_4 protocol1_17To1_16_4 = protocolManager.getProtocol(Protocol1_17To1_16_4.class);
+    	protocol1_17To1_16_4.replaceServerbound(ServerboundPackets1_16_2.CONTAINER_CLICK, new PacketHandlers() {
+            @Override
+            public void register() {
+                map(Types.BYTE);
+                handler(wrapper -> {
+                    short slot = wrapper.passthrough(Types.SHORT);
+                    byte button = wrapper.passthrough(Types.BYTE);
+                    wrapper.read(Types.SHORT);
+                    int mode = wrapper.passthrough(Types.VAR_INT);
+
+                    Item clicked = protocol1_17To1_16_4.getItemRewriter()
+                            .handleItemToServer(wrapper.user(), wrapper.read(Types.ITEM1_13_2));
+
+                    wrapper.write(Types.VAR_INT, 0);
+
+                    PlayerLastCursorItem state = wrapper.user().get(PlayerLastCursorItem.class);
+                    if (state == null) {
+                        wrapper.write(Types.ITEM1_13_2, clicked);
+                        return;
+                    }
+
+                    if (mode == 0 && button == 0 && clicked != null) {
+                        state.setLastCursorItem(clicked);
+                    } else if (mode == 0 && button == 1 && clicked != null) {
+                        if (state.isSet()) {
+                            state.setLastCursorItem(clicked);
+                        } else {
+                            state.setLastCursorItem(clicked, (clicked.amount() + 1) / 2);
+                        }
+                    } else if (!(mode == 5 && (slot == -999 && (button == 0 || button == 4) || (button == 1 || button == 5)))) {
+                        state.setLastCursorItem(null);
+                    }
+
+                    Item carried = state.getLastCursorItem();
+                    wrapper.write(Types.ITEM1_13_2, carried == null ? clicked : carried);
+                });
+            }
         });
     }
 

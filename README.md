@@ -19,16 +19,32 @@ ViaVersion VersionSwitcher for Minecraft Coder Pack (MCP)
   * [Exporting Without JAR Files](#exporting-without-jar-files)
 <!-- TOC -->
 # Updating notice for the latest version (if you are on ViaVersion 5.9.x or above)
-ViaVersion 5.9.0 did some changes to the packet registrations and Protocol API, you need to inject your packet registration code into corresponding Protocols if you have to.
+ViaVersion 5.9.0 did some changes to the packet registrations and Protocol API, you need to make sure your codes are being loaded after Via* platforms initiated.
 
 For example
 
-if you are on 1.8, inject your code to the end of ``registerPackets()`` in ``Protocol1_9To1_8.class``.
-if you are on 1.12.2, it's in ``Protocol1_13To1_12_2.class``.
+Like you do as [this](#main-class) do, after that you need delay the registration or replacement you have implemented.
+```java
+try {
+    ViaMCP.create();
+    
+    // In case you want a version slider like in the Minecraft options, you can use this code here, please choose one of those:
+          
+    ViaMCP.INSTANCE.initAsyncSlider(); // For top left aligned slider
+    ViaMCP.INSTANCE.initAsyncSlider(x, y, width (min. 110), height (recommended 20)); // For custom position and size slider
 
-**For MCP (Mod Coder Pack) client, you may code an injection base to inject fix codes.**
-**For Forge coremod, you can make a mixin injection to ``registerPackets()`` at point ``""RETURN""``.**
-**For other clients, you may make an ASM transformer to inject your code.**
+    // here
+    new Thread(() -> {
+        try {
+            Thread.sleep(1000); // Just make sure the viaversions are fully loaded, adjust it depend on your device.
+        } catch (Throwable ignored) {}
+
+        ViaMCP.INSTANCE.applyFix(); // Check the bugs you want to fix.
+    }).start();
+} catch (Exception e) {
+    e.printStackTrace();
+}
+```
 
 Moreover, you have to update your registration code if you ever overrided packets which are *already registered* in Via* libraries:
 ```java
@@ -83,6 +99,7 @@ other major versions [here](https://github.com/ViaVersion/ViaForge)
 NOTE:
 ViaVersion 5.0.0+ doesn't support Java 8 anymore, therefore when updating the libraries yourself, you need to download
 the -Java8 jar files from the [ci server](https://ci.viaversion.com/) or generate them yourself using [this](https://github.com/ViaVersion/ViaForge/tree/legacy-1.8?tab=readme-ov-file#installation) tool.
+*If you find the java source files lacking imports, fix it yourself.*
 
 ### Main-Class
 Add this to the main class of your client (aka injection function)
